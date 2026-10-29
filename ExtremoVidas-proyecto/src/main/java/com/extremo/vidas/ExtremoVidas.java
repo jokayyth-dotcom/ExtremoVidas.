@@ -180,7 +180,7 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
         }
 
         if (cmd.equals("vidasadmin")) {
-            if (sender instanceof Player player && !player.isOp()) {
+            if (!sender.hasPermission("extremovidas.admin")) {
                 sender.sendMessage("§cNo tienes permiso para usar este comando.");
                 return true;
             }
