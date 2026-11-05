@@ -8,11 +8,15 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.projectiles.ProjectileSource;
+import org.bukkit.entity.Projectile;
 
 import java.io.File;
 import java.io.IOException;
@@ -23,6 +27,10 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
     private YamlConfiguration data;
     private static final int MAX_LIVES = 3;
 
+    // PvP: cambia cada 20 minutos.
+    private static final long PVP_INTERVAL_TICKS = 20L * 60 * 20;
+    private boolean pvpEnabled = false;
+
     @Override
     public void onEnable() {
         if (!getDataFolder().exists()) getDataFolder().mkdirs();
@@ -31,7 +39,43 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
         data = YamlConfiguration.loadConfiguration(dataFile);
 
         Bukkit.getPluginManager().registerEvents(this, this);
-        getLogger().info("ExtremoVidas activado.");
+
+        // El PvP comienza desactivado.
+        pvpEnabled = false;
+        Bukkit.broadcastMessage("§a§l[PVP] §fPvP DESACTIVADO durante 20 minutos.");
+
+        // Alternar el PvP cada 20 minutos.
+        Bukkit.getScheduler().runTaskTimer(this, () -> {
+            pvpEnabled = !pvpEnabled;
+
+            if (pvpEnabled) {
+                Bukkit.broadcastMessage("§c§l[PVP] §f¡PvP ACTIVADO durante 20 minutos!");
+            } else {
+                Bukkit.broadcastMessage("§a§l[PVP] §f¡PvP DESACTIVADO durante 20 minutos!");
+            }
+        }, PVP_INTERVAL_TICKS, PVP_INTERVAL_TICKS);
+
+        getLogger().info("ExtremoVidas activado con PvP automatico.");
+    }
+
+    // Bloquea daño entre jugadores cuando el PvP está desactivado.
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onPlayerDamage(EntityDamageByEntityEvent event) {
+        if (pvpEnabled) return;
+        if (!(event.getEntity() instanceof Player)) return;
+
+        if (event.getDamager() instanceof Player) {
+            event.setCancelled(true);
+            return;
+        }
+
+        // También bloquea flechas y otros proyectiles de jugadores.
+        if (event.getDamager() instanceof Projectile projectile) {
+            ProjectileSource shooter = projectile.getShooter();
+            if (shooter instanceof Player) {
+                event.setCancelled(true);
+            }
+        }
     }
 
     private int lives(UUID id) {
