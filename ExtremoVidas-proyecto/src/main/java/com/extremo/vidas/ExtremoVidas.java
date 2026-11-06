@@ -1,4 +1,3 @@
-
 package com.extremo.vidas;
 
 import org.bukkit.Bukkit;
@@ -215,29 +214,37 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
         }
     }
 
-    // Cuando un jugador muere.
+    // Cuando un jugador muere por cualquier causa.
     @EventHandler
     public void onDeath(PlayerDeathEvent event) {
-
         Player player = event.getEntity();
-
-        int remaining = Math.max(
-            0,
-            lives(player.getUniqueId()) - 1
-        );
-
+        int remaining = Math.max(0, lives(player.getUniqueId()) - 1);
         setLives(player.getUniqueId(), remaining);
 
-        if (remaining > 0) {
+        String title = "§c§l¡" + player.getName() + " HA SIDO TABLEADO!";
+        String subtitle = remaining > 0
+                ? "§eLe quedan §c" + remaining + " §evida(s)"
+                : "§4§l¡SE HA QUEDADO SIN VIDAS!";
 
-            player.sendMessage(
-                "§eTe quedan §c" + remaining + " §evida(s)."
+        // El anuncio y el sonido son para todos menos el fallecido.
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            if (viewer.getUniqueId().equals(player.getUniqueId())) {
+                continue;
+            }
+            viewer.sendTitle(title, subtitle, 10, 80, 10);
+            viewer.playSound(
+                    viewer.getLocation(),
+                    "minecraft:entity.enderman.scream",
+                    1.0f,
+                    1.0f
             );
+        }
 
+        if (remaining > 0) {
+            player.sendMessage("§eTe quedan §c" + remaining + " §evida(s).");
         } else {
-
             player.sendMessage(
-                "§c¡Te has quedado sin vidas! Tras reaparecer pasarás a espectador."
+                    "§c¡Te has quedado sin vidas! Tras reaparecer pasarás a espectador."
             );
         }
     }
