@@ -221,8 +221,9 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
         int remaining = Math.max(0, lives(player.getUniqueId()) - 1);
         setLives(player.getUniqueId(), remaining);
 
-        String title = "§c§l¡" + player.getName() + " HA SIDO TABLEADO!";
-        String subtitle = remaining > 0
+        // El subtitulo es mas pequeno que el titulo principal.
+        String tableo = "§c§l¡" + player.getName() + " HA SIDO TABLEADO!";
+        String vidas = remaining > 0
                 ? "§eLe quedan §c" + remaining + " §evida(s)"
                 : "§4§l¡SE HA QUEDADO SIN VIDAS!";
 
@@ -231,10 +232,12 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
             if (viewer.getUniqueId().equals(player.getUniqueId())) {
                 continue;
             }
-            viewer.sendTitle(title, subtitle, 10, 80, 10);
+            // Sin titulo grande: subtitulo pequeno y vidas en el chat.
+            viewer.sendTitle(" ", tableo, 10, 60, 10);
+            viewer.sendMessage(vidas);
             viewer.playSound(
                     viewer.getLocation(),
-                    "minecraft:entity.enderman.scream",
+                    "minecraft:entity.enderman.stare",
                     1.0f,
                     1.0f
             );
