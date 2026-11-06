@@ -7,6 +7,7 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -16,100 +17,182 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.projectiles.ProjectileSource;
-import org.bukkit.entity.Projectile;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.UUID;
 
 public final class ExtremoVidas extends JavaPlugin implements Listener {
+
     private File dataFile;
     private YamlConfiguration data;
+
     private static final int MAX_LIVES = 3;
 
-    // PvP: cambia cada 20 minutos.
+    // El PvP cambia cada 20 minutos.
     private static final long PVP_INTERVAL_TICKS = 20L * 60 * 20;
+
+    // El PvP comienza desactivado.
     private boolean pvpEnabled = false;
 
     @Override
     public void onEnable() {
-        if (!getDataFolder().exists()) getDataFolder().mkdirs();
+
+        if (!getDataFolder().exists()) {
+            getDataFolder().mkdirs();
+        }
 
         dataFile = new File(getDataFolder(), "vidas.yml");
         data = YamlConfiguration.loadConfiguration(dataFile);
 
         Bukkit.getPluginManager().registerEvents(this, this);
 
-        // El PvP comienza desactivado.
+        // Estado inicial del PvP.
         pvpEnabled = false;
-        Bukkit.broadcastMessage("§a§l[PVP] §fPvP DESACTIVADO durante 20 minutos.");
+
+        Bukkit.broadcastMessage(
+            "§a§l[PVP] §fPvP DESACTIVADO durante 20 minutos."
+        );
 
         // Alternar el PvP cada 20 minutos.
         Bukkit.getScheduler().runTaskTimer(this, () -> {
+
             pvpEnabled = !pvpEnabled;
 
             if (pvpEnabled) {
-                Bukkit.broadcastMessage("§c§l[PVP] §f¡PvP ACTIVADO durante 20 minutos!");
+
+                // PvP ACTIVADO: mensaje rojo.
+                Bukkit.broadcastMessage(
+                    "§c§l[PVP] §f¡PvP ACTIVADO durante 20 minutos!"
+                );
+
+                // Sonido del cuerno de cabra.
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    player.playSound(
+                        player.getLocation(),
+                        "minecraft:item.goat_horn.sound.0",
+                        1.0f,
+                        1.0f
+                    );
+                }
+
             } else {
-                Bukkit.broadcastMessage("§a§l[PVP] §f¡PvP DESACTIVADO durante 20 minutos!");
+
+                // PvP DESACTIVADO: mensaje verde.
+                Bukkit.broadcastMessage(
+                    "§a§l[PVP] §f¡PvP DESACTIVADO durante 20 minutos!"
+                );
+
+                // Sonido del gato.
+                for (Player player : Bukkit.getOnlinePlayers()) {
+                    player.playSound(
+                        player.getLocation(),
+                        "minecraft:entity.cat.ambient",
+                        1.0f,
+                        1.0f
+                    );
+                }
             }
+
         }, PVP_INTERVAL_TICKS, PVP_INTERVAL_TICKS);
 
-        getLogger().info("ExtremoVidas activado con PvP automatico.");
+        getLogger().info(
+            "ExtremoVidas activado con PvP automatico y sonidos."
+        );
     }
 
-    // Bloquea daño entre jugadores cuando el PvP está desactivado.
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    // Bloquea el daño entre jugadores cuando el PvP está desactivado.
+    @EventHandler(
+        priority = EventPriority.HIGHEST,
+        ignoreCancelled = false
+    )
     public void onPlayerDamage(EntityDamageByEntityEvent event) {
+
         if (pvpEnabled) return;
+
         if (!(event.getEntity() instanceof Player)) return;
 
+        // Daño directo entre jugadores.
         if (event.getDamager() instanceof Player) {
             event.setCancelled(true);
             return;
         }
 
-        // También bloquea flechas y otros proyectiles de jugadores.
+        // Daño de proyectiles lanzados por jugadores.
         if (event.getDamager() instanceof Projectile projectile) {
+
             ProjectileSource shooter = projectile.getShooter();
+
             if (shooter instanceof Player) {
                 event.setCancelled(true);
             }
         }
     }
 
+    // Obtener las vidas de un jugador.
     private int lives(UUID id) {
         return data.getInt(id.toString(), MAX_LIVES);
     }
 
+    // Establecer las vidas de un jugador.
     private void setLives(UUID id, int amount) {
-        data.set(id.toString(), Math.max(0, Math.min(MAX_LIVES, amount)));
+
+        data.set(
+            id.toString(),
+            Math.max(0, Math.min(MAX_LIVES, amount))
+        );
+
         saveData();
     }
 
+    // Guardar las vidas.
     private void saveData() {
+
         try {
             data.save(dataFile);
+
         } catch (IOException e) {
-            getLogger().severe("No se pudieron guardar las vidas: " + e.getMessage());
+            getLogger().severe(
+                "No se pudieron guardar las vidas: " + e.getMessage()
+            );
         }
     }
 
-    private void updateGameMode(Player player, int previousLives, int newLives) {
+    // Actualizar modo de juego al perder o recuperar vidas.
+    private void updateGameMode(
+        Player player,
+        int previousLives,
+        int newLives
+    ) {
+
         if (newLives <= 0) {
+
             Bukkit.getScheduler().runTask(this, () -> {
-                if (player.isOnline()) player.setGameMode(GameMode.SPECTATOR);
+
+                if (player.isOnline()) {
+                    player.setGameMode(GameMode.SPECTATOR);
+                }
             });
+
         } else if (previousLives <= 0) {
+
             Bukkit.getScheduler().runTask(this, () -> {
-                if (player.isOnline()) player.setGameMode(GameMode.SURVIVAL);
+
+                if (player.isOnline()) {
+                    player.setGameMode(GameMode.SURVIVAL);
+                }
             });
-            player.sendMessage("§a¡Has recuperado una vida y vuelves a supervivencia!");
+
+            player.sendMessage(
+                "§a¡Has recuperado una vida y vuelves a supervivencia!"
+            );
         }
     }
 
+    // Cuando un jugador entra al servidor.
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
+
         Player player = event.getPlayer();
         UUID id = player.getUniqueId();
 
@@ -118,79 +201,141 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
         }
 
         if (lives(id) <= 0) {
+
             Bukkit.getScheduler().runTask(this, () -> {
-                if (player.isOnline()) player.setGameMode(GameMode.SPECTATOR);
+
+                if (player.isOnline()) {
+                    player.setGameMode(GameMode.SPECTATOR);
+                }
             });
-            player.sendMessage("§cTe has quedado sin vidas. Estás eliminado y en modo espectador.");
+
+            player.sendMessage(
+                "§cTe has quedado sin vidas. Estás eliminado y en modo espectador."
+            );
         }
     }
 
+    // Cuando un jugador muere.
     @EventHandler
     public void onDeath(PlayerDeathEvent event) {
+
         Player player = event.getEntity();
-        int remaining = Math.max(0, lives(player.getUniqueId()) - 1);
+
+        int remaining = Math.max(
+            0,
+            lives(player.getUniqueId()) - 1
+        );
 
         setLives(player.getUniqueId(), remaining);
 
         if (remaining > 0) {
-            player.sendMessage("§eTe quedan §c" + remaining + " §evida(s).");
+
+            player.sendMessage(
+                "§eTe quedan §c" + remaining + " §evida(s)."
+            );
+
         } else {
-            player.sendMessage("§c¡Te has quedado sin vidas! Tras reaparecer pasarás a espectador.");
+
+            player.sendMessage(
+                "§c¡Te has quedado sin vidas! Tras reaparecer pasarás a espectador."
+            );
         }
     }
 
+    // Cuando un jugador reaparece.
     @EventHandler
     public void onRespawn(PlayerRespawnEvent event) {
+
         Player player = event.getPlayer();
 
         if (lives(player.getUniqueId()) <= 0) {
+
             Bukkit.getScheduler().runTask(this, () -> {
-                if (player.isOnline() && lives(player.getUniqueId()) <= 0) {
+
+                if (
+                    player.isOnline() &&
+                    lives(player.getUniqueId()) <= 0
+                ) {
                     player.setGameMode(GameMode.SPECTATOR);
                 }
             });
         }
     }
 
+    // Comandos del plugin.
     @Override
     public boolean onCommand(
-            CommandSender sender,
-            Command command,
-            String label,
-            String[] args
+        CommandSender sender,
+        Command command,
+        String label,
+        String[] args
     ) {
+
         String cmd = command.getName().toLowerCase();
 
+        // Comando /vidas
         if (cmd.equals("vidas")) {
+
             if (!(sender instanceof Player player)) {
-                sender.sendMessage("Este comando es para jugadores.");
+
+                sender.sendMessage(
+                    "Este comando es para jugadores."
+                );
+
                 return true;
             }
 
-            sender.sendMessage("§aTe quedan §c" + lives(player.getUniqueId()) + "§a/3 vidas.");
+            sender.sendMessage(
+                "§aTe quedan §c" +
+                lives(player.getUniqueId()) +
+                "§a/3 vidas."
+            );
+
             return true;
         }
 
+        // Comando /darvida
         if (cmd.equals("darvida")) {
+
             if (!(sender instanceof Player donor)) {
-                sender.sendMessage("Solo un jugador puede donar vidas con este comando.");
+
+                sender.sendMessage(
+                    "Solo un jugador puede donar vidas con este comando."
+                );
+
                 return true;
             }
 
             if (args.length != 1) {
-                sender.sendMessage("§cUso: /darvida <jugador>");
+
+                sender.sendMessage(
+                    "§cUso: /darvida <jugador>"
+                );
+
                 return true;
             }
 
             Player recipient = Bukkit.getPlayerExact(args[0]);
 
             if (recipient == null) {
-                sender.sendMessage("§cEse jugador debe estar conectado.");
+
+                sender.sendMessage(
+                    "§cEse jugador debe estar conectado."
+                );
+
                 return true;
             }
 
-            if (recipient.getUniqueId().equals(donor.getUniqueId())) {
-                sender.sendMessage("§cNo puedes darte una vida a ti mismo.");
+            if (
+                recipient.getUniqueId().equals(
+                    donor.getUniqueId()
+                )
+            ) {
+
+                sender.sendMessage(
+                    "§cNo puedes darte una vida a ti mismo."
+                );
+
                 return true;
             }
 
@@ -198,42 +343,89 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
             int recipientLives = lives(recipient.getUniqueId());
 
             if (donorLives <= 0) {
-                sender.sendMessage("§cNo tienes vidas para donar.");
+
+                sender.sendMessage(
+                    "§cNo tienes vidas para donar."
+                );
+
                 return true;
             }
 
             if (recipientLives >= MAX_LIVES) {
-                sender.sendMessage("§cEse jugador ya tiene 3 vidas.");
+
+                sender.sendMessage(
+                    "§cEse jugador ya tiene 3 vidas."
+                );
+
                 return true;
             }
 
-            setLives(donor.getUniqueId(), donorLives - 1);
-            setLives(recipient.getUniqueId(), recipientLives + 1);
+            setLives(
+                donor.getUniqueId(),
+                donorLives - 1
+            );
 
-            donor.sendMessage("§eHas donado una vida a §b" + recipient.getName()
-                    + "§e. Te quedan §c" + (donorLives - 1) + "§e.");
+            setLives(
+                recipient.getUniqueId(),
+                recipientLives + 1
+            );
 
-            recipient.sendMessage("§a" + donor.getName()
-                    + " te ha dado una vida. Ahora tienes §c"
-                    + (recipientLives + 1) + "§a/3.");
+            donor.sendMessage(
+                "§eHas donado una vida a §b" +
+                recipient.getName() +
+                "§e. Te quedan §c" +
+                (donorLives - 1) +
+                "§e."
+            );
 
-            updateGameMode(recipient, recipientLives, recipientLives + 1);
-            updateGameMode(donor, donorLives, donorLives - 1);
+            recipient.sendMessage(
+                "§a" +
+                donor.getName() +
+                " te ha dado una vida. Ahora tienes §c" +
+                (recipientLives + 1) +
+                "§a/3."
+            );
+
+            updateGameMode(
+                recipient,
+                recipientLives,
+                recipientLives + 1
+            );
+
+            updateGameMode(
+                donor,
+                donorLives,
+                donorLives - 1
+            );
 
             return true;
         }
 
+        // Comando /vidasadmin
         if (cmd.equals("vidasadmin")) {
+
             if (!sender.hasPermission("extremovidas.admin")) {
-                sender.sendMessage("§cNo tienes permiso para usar este comando.");
+
+                sender.sendMessage(
+                    "§cNo tienes permiso para usar este comando."
+                );
+
                 return true;
             }
 
             if (args.length < 2) {
+
                 sender.sendMessage("§eUso:");
-                sender.sendMessage("§f/vidasadmin ver <jugador>");
-                sender.sendMessage("§f/vidasadmin dar <jugador> <cantidad>");
-                sender.sendMessage("§f/vidasadmin poner <jugador> <cantidad>");
+                sender.sendMessage(
+                    "§f/vidasadmin ver <jugador>"
+                );
+                sender.sendMessage(
+                    "§f/vidasadmin dar <jugador> <cantidad>"
+                );
+                sender.sendMessage(
+                    "§f/vidasadmin poner <jugador> <cantidad>"
+                );
+
                 return true;
             }
 
@@ -241,53 +433,109 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
             Player target = Bukkit.getPlayerExact(args[1]);
 
             if (target == null) {
-                sender.sendMessage("§cEl jugador debe estar conectado.");
+
+                sender.sendMessage(
+                    "§cEl jugador debe estar conectado."
+                );
+
                 return true;
             }
 
             int oldLives = lives(target.getUniqueId());
 
             if (action.equals("ver")) {
-                sender.sendMessage("§a" + target.getName() + " tiene §c"
-                        + oldLives + "§a/3 vidas.");
+
+                sender.sendMessage(
+                    "§a" +
+                    target.getName() +
+                    " tiene §c" +
+                    oldLives +
+                    "§a/3 vidas."
+                );
+
                 return true;
             }
 
-            if (!action.equals("dar") && !action.equals("poner")) {
-                sender.sendMessage("§cAcción inválida. Usa ver, dar o poner.");
+            if (
+                !action.equals("dar") &&
+                !action.equals("poner")
+            ) {
+
+                sender.sendMessage(
+                    "§cAcción inválida. Usa ver, dar o poner."
+                );
+
                 return true;
             }
 
             if (args.length != 3) {
-                sender.sendMessage("§cUso: /vidasadmin " + action
-                        + " <jugador> <cantidad>");
+
+                sender.sendMessage(
+                    "§cUso: /vidasadmin " +
+                    action +
+                    " <jugador> <cantidad>"
+                );
+
                 return true;
             }
 
             int amount;
+
             try {
+
                 amount = Integer.parseInt(args[2]);
+
             } catch (NumberFormatException e) {
-                sender.sendMessage("§cLa cantidad debe ser un número entero.");
+
+                sender.sendMessage(
+                    "§cLa cantidad debe ser un número entero."
+                );
+
                 return true;
             }
 
-            if (amount < 0 || (action.equals("dar") && amount == 0)) {
-                sender.sendMessage("§cLa cantidad debe ser positiva.");
+            if (
+                amount < 0 ||
+                (action.equals("dar") && amount == 0)
+            ) {
+
+                sender.sendMessage(
+                    "§cLa cantidad debe ser positiva."
+                );
+
                 return true;
             }
 
-            int newLives = action.equals("dar") ? oldLives + amount : amount;
+            int newLives = action.equals("dar")
+                ? oldLives + amount
+                : amount;
+
             newLives = Math.min(MAX_LIVES, newLives);
 
-            setLives(target.getUniqueId(), newLives);
-            updateGameMode(target, oldLives, newLives);
+            setLives(
+                target.getUniqueId(),
+                newLives
+            );
 
-            sender.sendMessage("§a" + target.getName() + " ahora tiene §c"
-                    + newLives + "§a/3 vidas.");
+            updateGameMode(
+                target,
+                oldLives,
+                newLives
+            );
 
-            target.sendMessage("§eUn administrador ha actualizado tus vidas: §c"
-                    + newLives + "§e/3.");
+            sender.sendMessage(
+                "§a" +
+                target.getName() +
+                " ahora tiene §c" +
+                newLives +
+                "§a/3 vidas."
+            );
+
+            target.sendMessage(
+                "§eUn administrador ha actualizado tus vidas: §c" +
+                newLives +
+                "§e/3."
+            );
 
             return true;
         }
