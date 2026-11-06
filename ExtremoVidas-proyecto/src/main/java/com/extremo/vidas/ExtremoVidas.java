@@ -237,8 +237,8 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
             viewer.sendMessage(vidas);
             viewer.playSound(
                     viewer.getLocation(),
-                    "minecraft:entity.enderman.stare",
-                    1.0f,
+                    "minecraft:entity.generic.explode",
+                    3.0f,
                     1.0f
             );
         }
