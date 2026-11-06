@@ -2,6 +2,8 @@ package com.extremo.vidas;
 
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
+import org.bukkit.Particle;
+import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -221,19 +223,26 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
         int remaining = Math.max(0, lives(player.getUniqueId()) - 1);
         setLives(player.getUniqueId(), remaining);
 
-        // El subtitulo es mas pequeno que el titulo principal.
-        String tableo = "§c§l¡" + player.getName() + " HA SIDO TABLEADO!";
+        // Titulo corto centrado, con el nombre en un subtitulo mas pequeno.
+        String tableo = "§c§l¡TABLEADO!";
+        String nombre = "§f" + player.getName();
         String vidas = remaining > 0
                 ? "§eLe quedan §c" + remaining + " §evida(s)"
                 : "§4§l¡SE HA QUEDADO SIN VIDAS!";
+
+        // Particulas decorativas en el lugar de la muerte: no causan dano.
+        Location muerte = player.getLocation().clone().add(0, 1.0, 0);
+        player.getWorld().spawnParticle(Particle.EXPLOSION, muerte, 1);
+        player.getWorld().spawnParticle(Particle.CLOUD, muerte, 28, 0.7, 0.6, 0.7, 0.08);
+        player.getWorld().spawnParticle(Particle.SMOKE, muerte, 18, 0.6, 0.5, 0.6, 0.03);
 
         // El anuncio y el sonido son para todos menos el fallecido.
         for (Player viewer : Bukkit.getOnlinePlayers()) {
             if (viewer.getUniqueId().equals(player.getUniqueId())) {
                 continue;
             }
-            // Sin titulo grande: subtitulo pequeno y vidas en el chat.
-            viewer.sendTitle(" ", tableo, 10, 60, 10);
+            // Titulo breve centrado, nombre debajo y vidas en el chat.
+            viewer.sendTitle(tableo, nombre, 10, 60, 10);
             viewer.sendMessage(vidas);
             viewer.playSound(
                     viewer.getLocation(),
