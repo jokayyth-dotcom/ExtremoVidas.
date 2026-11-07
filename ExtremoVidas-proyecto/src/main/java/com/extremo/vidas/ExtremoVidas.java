@@ -4,6 +4,16 @@ import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Particle;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.block.Block;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
+import org.bukkit.scheduler.BukkitTask;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -35,6 +45,15 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
 
     // El PvP comienza desactivado.
     private boolean pvpEnabled = false;
+
+    // Ruleta: un evento cada 30 minutos, con desafios de 15 minutos.
+    private static final long RULETA_INTERVAL = 20L * 60 * 30;
+    private static final int RULETA_DURATION = 20 * 60 * 15;
+    private final Random random = new Random();
+    private final List<UUID> mobsRuleta = new ArrayList<>();
+    private UUID jugadorRuleta;
+    private PotionEffectType efectoRuleta;
+    private BukkitTask cierreRuleta;
 
     @Override
     public void onEnable() {
@@ -84,11 +103,11 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
                     "§a§l[PVP] §f¡PvP DESACTIVADO durante 20 minutos!"
                 );
 
-                // Sonido del gato.
+                // El mismo cuerno de cabra al desactivar el PvP.
                 for (Player player : Bukkit.getOnlinePlayers()) {
                     player.playSound(
                         player.getLocation(),
-                        "minecraft:entity.cat.ambient",
+                        "minecraft:item.goat_horn.sound.0",
                         1.0f,
                         1.0f
                     );
@@ -97,9 +116,146 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
 
         }, PVP_INTERVAL_TICKS, PVP_INTERVAL_TICKS);
 
+        // Primera ruleta a los 30 minutos del arranque; luego cada 30.
+        Bukkit.getScheduler().runTaskTimer(this, this::iniciarRuleta,
+                RULETA_INTERVAL, RULETA_INTERVAL);
+
         getLogger().info(
             "ExtremoVidas activado con PvP automatico y sonidos."
         );
+    }
+
+    // Ruleta global: un jugador elegible y un reto al azar.
+    private void iniciarRuleta() {
+        // Evita solapamientos si el servidor se retrasa.
+        terminarRuleta();
+
+        List<Player> candidatos = new ArrayList<>();
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p.getGameMode() == GameMode.SURVIVAL && !p.isDead()
+                    && lives(p.getUniqueId()) > 0) {
+                candidatos.add(p);
+            }
+        }
+        if (candidatos.isEmpty()) {
+            Bukkit.broadcastMessage("§7[Ruleta] No hay jugadores elegibles esta vez.");
+            return;
+        }
+
+        Player elegido = candidatos.get(random.nextInt(candidatos.size()));
+        jugadorRuleta = elegido.getUniqueId();
+        String reto;
+
+        // Mitad de posibilidades: un efecto; mitad: una horda de mobs.
+        if (random.nextBoolean()) {
+            int opcion = random.nextInt(7);
+            PotionEffectType tipo;
+            String nombre;
+            int duracion = RULETA_DURATION;
+            switch (opcion) {
+                case 0 -> { tipo = PotionEffectType.BLINDNESS; nombre = "Ceguera"; }
+                case 1 -> { tipo = PotionEffectType.SLOWNESS; nombre = "Lentitud"; }
+                case 2 -> { tipo = PotionEffectType.WEAKNESS; nombre = "Debilidad"; }
+                case 3 -> { tipo = PotionEffectType.MINING_FATIGUE; nombre = "Fatiga minera"; }
+                case 4 -> { tipo = PotionEffectType.HUNGER; nombre = "Hambre"; }
+                case 5 -> { tipo = PotionEffectType.POISON; nombre = "Veneno"; }
+                default -> {
+                    // 15 minutos de levitacion continua seria letal por caidas.
+                    // Solo 5 segundos de levitacion y 15 min de caida lenta.
+                    tipo = PotionEffectType.LEVITATION;
+                    nombre = "Levitacion (5 s) + caida lenta (15 min)";
+                    duracion = 20 * 5;
+                    elegido.addPotionEffect(new PotionEffect(
+                            PotionEffectType.SLOW_FALLING, RULETA_DURATION, 0));
+                }
+            }
+            elegido.addPotionEffect(new PotionEffect(tipo, duracion, 0));
+            efectoRuleta = tipo;
+            reto = nombre;
+        } else {
+            EntityType[] tipos = {
+                    EntityType.WITHER_SKELETON, EntityType.BLAZE,
+                    EntityType.SPIDER, EntityType.SKELETON, EntityType.CAVE_SPIDER
+            };
+            EntityType tipo = tipos[random.nextInt(tipos.length)];
+            int cantidad = 20 + random.nextInt(11);
+            int creados = 0;
+            Location centro = elegido.getLocation();
+            for (int i = 0; i < cantidad; i++) {
+                // Intentar encontrar un lugar libre cerca, sin modificar bloques.
+                Location spawn = buscarSpawnSeguro(centro);
+                if (spawn == null) continue;
+                LivingEntity mob = (LivingEntity) centro.getWorld().spawnEntity(spawn, tipo);
+                mob.setRemoveWhenFarAway(false);
+                mobsRuleta.add(mob.getUniqueId());
+                creados++;
+            }
+            reto = "¡" + creados + " " + tipo.name().replace('_', ' ') + "!";
+        }
+
+        Bukkit.broadcastMessage("§5§l[ RULETA ] §f" + elegido.getName()
+                + " §dha recibido: §c" + reto);
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            p.sendTitle("§5§l¡RULETA!", "§f" + elegido.getName() + " §7- §c" + reto,
+                    10, 60, 10);
+            p.playSound(p.getLocation(), "minecraft:item.goat_horn.sound.0", 1.0f, 1.0f);
+        }
+        elegido.sendMessage("§c[Ruleta] El reto termina en 15 minutos.");
+        cierreRuleta = Bukkit.getScheduler().runTaskLater(this, this::terminarRuleta,
+                RULETA_DURATION);
+    }
+
+    // Busca un espacio despejado en superficie cercana; evita generar mobs dentro de bloques.
+    private Location buscarSpawnSeguro(Location centro) {
+        for (int intento = 0; intento < 18; intento++) {
+            int dx = random.nextInt(17) - 8;
+            int dz = random.nextInt(17) - 8;
+            int x = centro.getBlockX() + dx;
+            int z = centro.getBlockZ() + dz;
+            for (int dy = -4; dy <= 4; dy++) {
+                int y = centro.getBlockY() + dy;
+                if (y <= centro.getWorld().getMinHeight() + 1
+                        || y >= centro.getWorld().getMaxHeight() - 2) continue;
+                Block piso = centro.getWorld().getBlockAt(x, y - 1, z);
+                Block pies = centro.getWorld().getBlockAt(x, y, z);
+                Block cabeza = centro.getWorld().getBlockAt(x, y + 1, z);
+                if (piso.getType().isSolid() && pies.getType() == Material.AIR
+                        && cabeza.getType() == Material.AIR) {
+                    return new Location(centro.getWorld(), x + 0.5, y, z + 0.5);
+                }
+            }
+        }
+        return null;
+    }
+
+    private void terminarRuleta() {
+        if (cierreRuleta != null) {
+            cierreRuleta.cancel();
+            cierreRuleta = null;
+        }
+        if (jugadorRuleta != null) {
+            Player p = Bukkit.getPlayer(jugadorRuleta);
+            if (p != null) {
+                if (efectoRuleta != null) p.removePotionEffect(efectoRuleta);
+                // El efecto de caida lenta solo se aplica con la levitacion.
+                if (efectoRuleta == PotionEffectType.LEVITATION) {
+                    p.removePotionEffect(PotionEffectType.SLOW_FALLING);
+                }
+                p.sendMessage("§a[Ruleta] ¡El reto ha terminado!");
+            }
+        }
+        for (UUID id : mobsRuleta) {
+            org.bukkit.entity.Entity mob = Bukkit.getEntity(id);
+            if (mob != null) mob.remove();
+        }
+        mobsRuleta.clear();
+        jugadorRuleta = null;
+        efectoRuleta = null;
+    }
+
+    @Override
+    public void onDisable() {
+        terminarRuleta();
     }
 
     // Bloquea el daño entre jugadores cuando el PvP está desactivado.
