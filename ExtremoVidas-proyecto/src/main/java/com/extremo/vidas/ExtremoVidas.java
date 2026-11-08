@@ -68,12 +68,15 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
 
     // Ruleta: un evento cada 30 minutos, con desafios de 15 minutos.
     private static final long RULETA_INTERVAL = 20L * 60 * 30;
-    private static final int RULETA_DURATION = 20 * 60 * 15;
+    private static final int RULETA_MIN_DURATION = 20 * 60 * 15;
+    private static final int RULETA_MAX_DURATION = 20 * 60 * 30;
+    private static final long RULETA_WARNING_TICKS = 20L * 5;
     private final Random random = new Random();
     private final List<UUID> mobsRuleta = new ArrayList<>();
     private UUID jugadorRuleta;
     private PotionEffectType efectoRuleta;
     private BukkitTask cierreRuleta;
+    private BukkitTask avisoRuleta;
 
     @Override
     public void onEnable() {
@@ -148,84 +151,139 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
         );
     }
 
-    // Ruleta global: un jugador elegible y un reto al azar.
+    // La ruleta avisa primero y aplica el desafio cinco segundos despues.
     private void iniciarRuleta() {
-        // Evita solapamientos si el servidor se retrasa.
         terminarRuleta();
-
         List<Player> candidatos = new ArrayList<>();
         for (Player p : Bukkit.getOnlinePlayers()) {
             if (p.getGameMode() == GameMode.SURVIVAL && !p.isDead()
-                    && lives(p.getUniqueId()) > 0) {
-                candidatos.add(p);
-            }
+                    && lives(p.getUniqueId()) > 0) candidatos.add(p);
         }
         if (candidatos.isEmpty()) {
-            Bukkit.broadcastMessage("§7[Ruleta] No hay jugadores elegibles esta vez.");
+            Bukkit.broadcastMessage("§7[Ruleta] No hay jugadores elegibles.");
             return;
         }
-
         Player elegido = candidatos.get(random.nextInt(candidatos.size()));
         jugadorRuleta = elegido.getUniqueId();
+        int categoria = random.nextInt(4); // efectos, mobs comunes, ocultos o teleport
+        int duracion = RULETA_MIN_DURATION + random.nextInt(RULETA_MAX_DURATION - RULETA_MIN_DURATION + 1);
+        int nivel = 1 + random.nextInt(3);
         String reto;
-
-        // Mitad de posibilidades: un efecto; mitad: una horda de mobs.
-        if (random.nextBoolean()) {
-            int opcion = random.nextInt(7);
-            PotionEffectType tipo;
-            String nombre;
-            int duracion = RULETA_DURATION;
-            switch (opcion) {
-                case 0 -> { tipo = PotionEffectType.BLINDNESS; nombre = "Ceguera"; }
-                case 1 -> { tipo = PotionEffectType.SLOWNESS; nombre = "Lentitud"; }
-                case 2 -> { tipo = PotionEffectType.WEAKNESS; nombre = "Debilidad"; }
-                case 3 -> { tipo = PotionEffectType.MINING_FATIGUE; nombre = "Fatiga minera"; }
-                case 4 -> { tipo = PotionEffectType.HUNGER; nombre = "Hambre"; }
-                case 5 -> { tipo = PotionEffectType.POISON; nombre = "Veneno"; }
-                default -> {
-                    // 15 minutos de levitacion continua seria letal por caidas.
-                    // Solo 5 segundos de levitacion y 15 min de caida lenta.
-                    tipo = PotionEffectType.LEVITATION;
-                    nombre = "Levitacion (5 s) + caida lenta (15 min)";
-                    duracion = 20 * 5;
-                    elegido.addPotionEffect(new PotionEffect(
-                            PotionEffectType.SLOW_FALLING, RULETA_DURATION, 0));
-                }
+        int variante = random.nextInt(7);
+        EntityType mob = null;
+        int cantidad = 0;
+        if (categoria == 0) {
+            String[] nombres = {"Ceguera", "Lentitud", "Debilidad", "Fatiga minera", "Hambre", "Veneno", "Levitacion"};
+            reto = nombres[variante] + " nivel " + (variante == 0 ? 1 : nivel)
+                    + " durante " + (duracion / 1200) + " minutos aprox.";
+        } else if (categoria == 1) {
+            EntityType[] tipos = {EntityType.WITHER_SKELETON, EntityType.BLAZE,
+                    EntityType.SPIDER, EntityType.SKELETON, EntityType.CAVE_SPIDER};
+            mob = tipos[random.nextInt(tipos.length)];
+            cantidad = 20 + random.nextInt(11);
+            reto = cantidad + " " + mob.name().replace('_', ' ');
+        } else if (categoria == 2) {
+            if (random.nextBoolean()) {
+                mob = EntityType.ILLUSIONER;
+                cantidad = 5 + random.nextInt(11);
+            } else {
+                mob = EntityType.GIANT;
+                cantidad = 1 + random.nextInt(5);
             }
-            elegido.addPotionEffect(new PotionEffect(tipo, duracion, 0));
-            efectoRuleta = tipo;
-            reto = nombre;
+            reto = cantidad + " " + mob.name().replace('_', ' ');
         } else {
-            EntityType[] tipos = {
-                    EntityType.WITHER_SKELETON, EntityType.BLAZE,
-                    EntityType.SPIDER, EntityType.SKELETON, EntityType.CAVE_SPIDER
-            };
-            EntityType tipo = tipos[random.nextInt(tipos.length)];
-            int cantidad = 20 + random.nextInt(11);
-            int creados = 0;
-            Location centro = elegido.getLocation();
-            for (int i = 0; i < cantidad; i++) {
-                // Intentar encontrar un lugar libre cerca, sin modificar bloques.
-                Location spawn = buscarSpawnSeguro(centro);
-                if (spawn == null) continue;
-                LivingEntity mob = (LivingEntity) centro.getWorld().spawnEntity(spawn, tipo);
-                mob.setRemoveWhenFarAway(false);
-                mobsRuleta.add(mob.getUniqueId());
-                creados++;
-            }
-            reto = "¡" + creados + " " + tipo.name().replace('_', ' ') + "!";
+            reto = random.nextBoolean() ? "TELETRANSPORTE A 20.000 BLOQUES" : "TELETRANSPORTE A Y=250";
         }
-
-        Bukkit.broadcastMessage("§5§l[ RULETA ] §f" + elegido.getName()
-                + " §dha recibido: §c" + reto);
+        final EntityType mobElegido = mob;
+        final int cantidadElegida = cantidad;
+        final String retoElegido = reto;
+        Bukkit.broadcastMessage("§5§l[RULETA] §f" + elegido.getName() + " §crecibira: §e" + reto
+                + " §7(en 5 segundos)");
         for (Player p : Bukkit.getOnlinePlayers()) {
-            p.sendTitle("§5§l¡RULETA!", "§f" + elegido.getName() + " §7- §c" + reto,
-                    10, 60, 10);
+            p.sendTitle("§5§l¡RULETA!", "§e" + elegido.getName() + " §7- §c5 segundos", 5, 70, 5);
             p.playSound(p.getLocation(), "minecraft:item.goat_horn.sound.0", 1.0f, 1.0f);
         }
-        elegido.sendMessage("§c[Ruleta] El reto termina en 15 minutos.");
-        cierreRuleta = Bukkit.getScheduler().runTaskLater(this, this::terminarRuleta,
-                RULETA_DURATION);
+        avisoRuleta = Bukkit.getScheduler().runTaskLater(this, () -> {
+            avisoRuleta = null;
+            if (!elegido.isOnline() || elegido.isDead() || elegido.getGameMode() != GameMode.SURVIVAL
+                    || lives(elegido.getUniqueId()) <= 0) {
+                Bukkit.broadcastMessage("§7[Ruleta] Reto cancelado: el jugador ya no es elegible.");
+                jugadorRuleta = null;
+                return;
+            }
+            Bukkit.broadcastMessage("§4§l[RULETA] §c¡DESAFIO ACTIVADO! §f" + elegido.getName()
+                    + ": §e" + retoElegido);
+            if (categoria == 0) {
+                PotionEffectType[] efectos = {PotionEffectType.BLINDNESS, PotionEffectType.SLOWNESS,
+                        PotionEffectType.WEAKNESS, PotionEffectType.MINING_FATIGUE,
+                        PotionEffectType.HUNGER, PotionEffectType.POISON, PotionEffectType.LEVITATION};
+                PotionEffectType tipo = efectos[variante];
+                // La ceguera no tiene niveles funcionales distintos en Minecraft.
+                int amplificador = tipo == PotionEffectType.BLINDNESS ? 0 : nivel - 1;
+                elegido.addPotionEffect(new PotionEffect(tipo, duracion, amplificador));
+                efectoRuleta = tipo;
+                elegido.sendMessage("§c[Ruleta] Efecto activo durante " + (duracion / 20) + " segundos.");
+            } else if (categoria == 1 || categoria == 2) {
+                int creados = 0;
+                Location centro = elegido.getLocation();
+                for (int i = 0; i < cantidadElegida; i++) {
+                    Location spawn = buscarSpawnSeguro(centro);
+                    if (spawn == null) continue;
+                    try {
+                        LivingEntity entidad = (LivingEntity) centro.getWorld().spawnEntity(spawn, mobElegido);
+                        entidad.setRemoveWhenFarAway(false);
+                        mobsRuleta.add(entidad.getUniqueId());
+                        creados++;
+                    } catch (IllegalArgumentException ex) {
+                        getLogger().warning("No se pudo generar " + mobElegido + ": " + ex.getMessage());
+                        break;
+                    }
+                }
+                elegido.sendMessage("§c[Ruleta] Aparecieron " + creados + " enemigos. Se retiraran en "
+                        + (duracion / 1200) + " minutos aproximadamente.");
+            } else {
+                boolean lejos = retoElegido.contains("20.000");
+                teletransportarRuleta(elegido, lejos);
+            }
+            cierreRuleta = Bukkit.getScheduler().runTaskLater(this, this::terminarRuleta, duracion);
+        }, RULETA_WARNING_TICKS);
+    }
+
+    private void teletransportarRuleta(Player p, boolean lejos) {
+        Location origen = p.getLocation();
+        org.bukkit.World mundo = origen.getWorld();
+        if (mundo == null) return;
+        Location destino;
+        if (lejos) {
+            double angulo = random.nextDouble() * Math.PI * 2;
+            double x = origen.getX() + Math.cos(angulo) * 20000;
+            double z = origen.getZ() + Math.sin(angulo) * 20000;
+            org.bukkit.WorldBorder borde = mundo.getWorldBorder();
+            double mitad = borde.getSize() / 2.0 - 16;
+            if (mitad <= 0) { p.sendMessage("§c[Ruleta] Borde demasiado pequeno para teleport."); return; }
+            x = Math.max(borde.getCenter().getX() - mitad, Math.min(borde.getCenter().getX() + mitad, x));
+            z = Math.max(borde.getCenter().getZ() - mitad, Math.min(borde.getCenter().getZ() + mitad, z));
+            final double fx = x, fz = z;
+            // Paper carga el chunk de destino sin bloquear el hilo principal.
+            mundo.getChunkAtAsync((int)Math.floor(fx) >> 4, (int)Math.floor(fz) >> 4).thenAccept(chunk ->
+                Bukkit.getScheduler().runTask(this, () -> {
+                    if (!p.isOnline() || p.isDead()) return;
+                    int y = mundo.getHighestBlockYAt((int)Math.floor(fx), (int)Math.floor(fz)) + 2;
+                    y = Math.min(mundo.getMaxHeight() - 3, Math.max(mundo.getMinHeight() + 3, y));
+                    Location sitio = new Location(mundo, fx, y, fz, origen.getYaw(), origen.getPitch());
+                    p.teleport(sitio);
+                    p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, 20 * 45, 0));
+                    p.sendMessage("§c[Ruleta] Teletransportado lejos de tu posicion original.");
+                })
+            );
+        } else {
+            int y = Math.min(250, mundo.getMaxHeight() - 3);
+            if (y <= mundo.getMinHeight() + 2) return;
+            destino = new Location(mundo, origen.getX(), y, origen.getZ(), origen.getYaw(), origen.getPitch());
+            p.teleport(destino);
+            p.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, 20 * 45, 0));
+            p.sendMessage("§c[Ruleta] ¡Estas en la altura Y=" + y + "! Tienes 45 segundos de caida lenta.");
+        }
     }
 
     // Busca un espacio despejado en superficie cercana; evita generar mobs dentro de bloques.
@@ -252,6 +310,7 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
     }
 
     private void terminarRuleta() {
+        if (avisoRuleta != null) { avisoRuleta.cancel(); avisoRuleta = null; }
         if (cierreRuleta != null) {
             cierreRuleta.cancel();
             cierreRuleta = null;
