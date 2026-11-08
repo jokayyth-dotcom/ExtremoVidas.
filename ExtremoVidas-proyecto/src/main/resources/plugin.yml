@@ -1,25 +1,25 @@
 
 name: ExtremoVidas
-version: 1.0.0
+version: 1.1.0
 main: com.extremo.vidas.ExtremoVidas
 api-version: '1.21'
-description: Sistema de tres vidas para Minecraft Extremo
+description: Tres vidas, PvP, ruleta y misiones semanales
 
 commands:
-  darvida:
-    description: Entrega una vida a otro jugador
-    usage: /darvida <jugador>
-
   vidas:
-    description: Muestra tus vidas restantes
-    usage: /vidas
-
+    description: Muestra tus vidas
+  darvida:
+    description: Dona una vida
   vidasadmin:
-    description: Administra las vidas de los jugadores
-    usage: /vidasadmin <ver|dar|poner> <jugador> [cantidad]
+    description: Administra vidas
+    permission: extremovidas.admin
+  mision:
+    description: Abre el menu de misiones semanales
+  misionadmin:
+    description: Configura las misiones semanales
     permission: extremovidas.admin
 
 permissions:
   extremovidas.admin:
-    description: Permite administrar las vidas de los jugadores
+    description: Administrar vidas y misiones
     default: op
