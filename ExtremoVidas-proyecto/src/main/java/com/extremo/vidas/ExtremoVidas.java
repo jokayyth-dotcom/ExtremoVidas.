@@ -1,6 +1,20 @@
 package com.extremo.vidas;
 
 import org.bukkit.Bukkit;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.entity.EntityDeathEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.ChatColor;
+import java.time.LocalDate;
+import java.time.temporal.WeekFields;
+import java.util.Locale;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Arrays;
+import java.util.Collections;
 import org.bukkit.GameMode;
 import org.bukkit.Particle;
 import org.bukkit.Location;
@@ -35,6 +49,12 @@ import java.util.UUID;
 
 public final class ExtremoVidas extends JavaPlugin implements Listener {
 
+    private File missionFile;
+    private YamlConfiguration missions;
+    private static final String MENU_MISION = "§5§lMisiones semanales";
+    private static final String MENU_PREMIO = "§6§lElegir recompensa";
+    private static final String MENU_ADMIN = "§4§lConfigurar misiones";
+    private final Map<UUID, Integer> pendingClaim = new HashMap<>();
     private File dataFile;
     private YamlConfiguration data;
 
@@ -65,6 +85,9 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
         dataFile = new File(getDataFolder(), "vidas.yml");
         data = YamlConfiguration.loadConfiguration(dataFile);
 
+        missionFile = new File(getDataFolder(), "misiones.yml");
+        missions = YamlConfiguration.loadConfiguration(missionFile);
+        comprobarSemana();
         Bukkit.getPluginManager().registerEvents(this, this);
 
         // Estado inicial del PvP.
@@ -256,6 +279,7 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
     @Override
     public void onDisable() {
         terminarRuleta();
+        guardarMisiones();
     }
 
     // Bloquea el daño entre jugadores cuando el PvP está desactivado.
@@ -447,6 +471,19 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
     ) {
 
         String cmd = command.getName().toLowerCase();
+        if (cmd.equals("mision")) {
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage("§cAbre este menú dentro del juego.");
+                return true;
+            }
+            comprobarSemana();
+            abrirMisiones(player);
+            return true;
+        }
+        if (cmd.equals("misionadmin")) {
+            return comandoMisionAdmin(sender, args);
+        }
+
 
         // Comando /vidas
         if (cmd.equals("vidas")) {
@@ -717,4 +754,292 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
 
         return false;
     }
+
+    // ================= MISIONES SEMANALES =================
+    // Hasta 3 misiones compartidas, progreso y premios individuales.
+    private String semanaActual() {
+        LocalDate hoy = LocalDate.now();
+        WeekFields wf = WeekFields.ISO;
+        return hoy.get(wf.weekBasedYear()) + "-" + hoy.get(wf.weekOfWeekBasedYear());
+    }
+
+    private void comprobarSemana() {
+        String actual = semanaActual();
+        if (!actual.equals(missions.getString("semana", ""))) {
+            missions.set("semana", actual);
+            missions.set("jugadores", null);
+            guardarMisiones();
+        }
+    }
+
+    private void guardarMisiones() {
+        try { missions.save(missionFile); }
+        catch (IOException e) { getLogger().severe("No se guardaron las misiones: " + e.getMessage()); }
+    }
+
+    private String base(int n) { return "misiones." + n + "."; }
+    private String progreso(Player p, int n) {
+        return "jugadores." + p.getUniqueId() + "." + n + ".";
+    }
+    private boolean existe(int n) { return missions.getBoolean(base(n) + "activa", false); }
+    private int objetivo(int n) { return missions.getInt(base(n) + "cantidad", 1); }
+    private int avance(Player p, int n) {
+        return missions.getInt(progreso(p, n) + "avance", 0);
+    }
+    private boolean cobrada(Player p, int n) {
+        return missions.getBoolean(progreso(p, n) + "cobrada", false);
+    }
+    private String descripcion(int n) {
+        String tipo = missions.getString(base(n) + "tipo", "");
+        String id = missions.getString(base(n) + "objetivo", "");
+        String desc = (tipo.equals("matar") ? "Mata " : "Entrega ") + objetivo(n) + " " + id;
+        if (tipo.equals("entregar") && missions.contains(base(n) + "extra.item"))
+            desc += " + " + missions.getInt(base(n) + "extra.cantidad") + " " + missions.getString(base(n) + "extra.item");
+        return desc;
+    }
+
+    private ItemStack icono(Material material, String nombre, String... descripcion) {
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName(nombre);
+        meta.setLore(Arrays.asList(descripcion));
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private void abrirMisiones(Player p) {
+        comprobarSemana();
+        Inventory inv = Bukkit.createInventory(null, 27, MENU_MISION);
+        for (int n = 1; n <= 3; n++) {
+            if (!existe(n)) continue;
+            String estado = cobrada(p,n) ? "§aYa cobrada esta semana" :
+                "§eProgreso: " + avance(p,n) + "/" + objetivo(n);
+            inv.setItem(10 + (n - 1) * 3,
+                icono(Material.WRITABLE_BOOK, "§d§lMisión " + n,
+                    "§f" + descripcion(n), estado,
+                    "§7Clic para entregar o reclamar"));
+        }
+        if (p.hasPermission("extremovidas.admin"))
+            inv.setItem(22, icono(Material.COMMAND_BLOCK, "§cAdministrar", "§7Clic para configurar"));
+        p.openInventory(inv);
+    }
+
+    private void abrirAdmin(Player p) {
+        Inventory inv = Bukkit.createInventory(null, 27, MENU_ADMIN);
+        for (int n = 1; n <= 3; n++) {
+            inv.setItem(10 + (n - 1) * 3,
+                icono(Material.ANVIL, "§eMisión " + n,
+                    existe(n) ? "§f" + descripcion(n) : "§7Sin configurar",
+                    "§7Configura con /misionadmin", "§7La recompensa es el objeto en tu mano"));
+        }
+        inv.setItem(22, icono(Material.BOOK, "§aComandos en el chat",
+            "§f/misionadmin matar <1-3> <mob> <cantidad>",
+            "§f/misionadmin entregar <1-3> <item> <cantidad>",
+            "§f/misionadmin extra <1-3> <item> <cantidad>",
+            "§f/misionadmin premio <1-3>"));
+        p.openInventory(inv);
+    }
+
+    private boolean comandoMisionAdmin(CommandSender sender, String[] args) {
+        if (!sender.hasPermission("extremovidas.admin")) {
+            sender.sendMessage("§cNo tienes permiso."); return true;
+        }
+        if (args.length == 0) {
+            if (sender instanceof Player p) abrirAdmin(p);
+            else sender.sendMessage("Usa /misionadmin matar|entregar|premio|borrar ...");
+            return true;
+        }
+        if (args.length < 2) { sender.sendMessage("§eUso: /misionadmin <matar|entregar|premio|borrar> <1-3> [mob/item] [cantidad]"); return true; }
+        int n;
+        try { n = Integer.parseInt(args[1]); }
+        catch (NumberFormatException ex) { sender.sendMessage("§cNúmero inválido."); return true; }
+        if (n < 1 || n > 3) { sender.sendMessage("§cElige misión 1, 2 o 3."); return true; }
+        String b = base(n);
+        String accion = args[0].toLowerCase(Locale.ROOT);
+        if (accion.equals("borrar")) {
+            missions.set("misiones." + n, null);
+        } else if (accion.equals("premio")) {
+            if (!(sender instanceof Player p)) { sender.sendMessage("§cDebes estar dentro del juego."); return true; }
+            if (!existe(n)) { sender.sendMessage("§cConfigura primero la misión."); return true; }
+            ItemStack mano = p.getInventory().getItemInMainHand();
+            if (mano.getType().isAir()) { sender.sendMessage("§cSujeta el premio en la mano."); return true; }
+            missions.set(b + "premio", mano.clone());
+        } else if (accion.equals("extra")) {
+            if (args.length != 4 || !"entregar".equals(missions.getString(b + "tipo"))) {
+                sender.sendMessage("§cUso: /misionadmin extra <1-3> <item> <cantidad> (solo entrega)"); return true;
+            }
+            Material mat = Material.matchMaterial(args[2]);
+            int cantidad;
+            try { cantidad = Integer.parseInt(args[3]); }
+            catch (NumberFormatException ex) { sender.sendMessage("§cCantidad inválida."); return true; }
+            if (mat == null || !mat.isItem() || mat.isAir() || cantidad < 1 || cantidad > 100000) {
+                sender.sendMessage("§cItem o cantidad inválidos."); return true;
+            }
+            missions.set(b + "extra.item", mat.name());
+            missions.set(b + "extra.cantidad", cantidad);
+            missions.set("jugadores", null);
+        } else if (accion.equals("matar") || accion.equals("entregar")) {
+            if (args.length != 4) { sender.sendMessage("§cUso: /misionadmin " + accion + " <1-3> <mob/item> <cantidad>"); return true; }
+            String id = args[2].toUpperCase(Locale.ROOT);
+            if (accion.equals("matar")) {
+                try { EntityType tipo = EntityType.valueOf(id); if (!tipo.isAlive() || tipo == EntityType.PLAYER) throw new IllegalArgumentException(); }
+                catch (IllegalArgumentException ex) { sender.sendMessage("§cMob inválido, ejemplo: WARDEN, ZOMBIE, BLAZE."); return true; }
+            } else {
+                Material mat = Material.matchMaterial(id);
+                if (mat == null || mat.isAir() || !mat.isItem()) { sender.sendMessage("§cÍtem inválido, ejemplo: TOTEM_OF_UNDYING o DIAMOND."); return true; }
+                id = mat.name();
+            }
+            int cantidad;
+            try { cantidad = Integer.parseInt(args[3]); }
+            catch (NumberFormatException ex) { sender.sendMessage("§cCantidad inválida."); return true; }
+            if (cantidad < 1 || cantidad > 100000) { sender.sendMessage("§cCantidad entre 1 y 100000."); return true; }
+            missions.set(b + "tipo", accion);
+            missions.set(b + "objetivo", id);
+            missions.set(b + "cantidad", cantidad);
+            missions.set(b + "activa", true);
+            missions.set(b + "extra", null);
+            // Modificar un objetivo reinicia su progreso para evitar reclamar el nuevo con avances antiguos.
+            missions.set("jugadores", null);
+        } else {
+            sender.sendMessage("§cAcción inválida."); return true;
+        }
+        guardarMisiones();
+        sender.sendMessage("§aMisión " + n + " actualizada correctamente.");
+        if (sender instanceof Player p) abrirAdmin(p);
+        return true;
+    }
+
+    @EventHandler
+    public void onMisionKill(EntityDeathEvent event) {
+        Player p = event.getEntity().getKiller();
+        if (p == null) return;
+        comprobarSemana();
+        for (int n = 1; n <= 3; n++) {
+            if (!existe(n) || cobrada(p,n)) continue;
+            if (!"matar".equals(missions.getString(base(n) + "tipo"))) continue;
+            if (!event.getEntityType().name().equals(missions.getString(base(n) + "objetivo"))) continue;
+            int anterior = avance(p,n);
+            if (anterior >= objetivo(n)) continue;
+            missions.set(progreso(p,n) + "avance", anterior + 1);
+            if (anterior + 1 == objetivo(n)) p.sendMessage("§a¡Misión " + n + " completada! Usa /mision para reclamar.");
+        }
+        guardarMisiones();
+    }
+
+    private int contar(Player p, Material mat) {
+        int cantidad = 0;
+        for (ItemStack stack : p.getInventory().getStorageContents())
+            if (stack != null && stack.getType() == mat) cantidad += stack.getAmount();
+        return cantidad;
+    }
+
+    private void consumir(Player p, Material mat, int cantidad) {
+        ItemStack[] contents = p.getInventory().getStorageContents();
+        for (int i = 0; i < contents.length && cantidad > 0; i++) {
+            ItemStack stack = contents[i];
+            if (stack == null || stack.getType() != mat) continue;
+            int quitar = Math.min(cantidad, stack.getAmount());
+            stack.setAmount(stack.getAmount() - quitar);
+            if (stack.getAmount() <= 0) contents[i] = null;
+            cantidad -= quitar;
+        }
+        p.getInventory().setStorageContents(contents);
+    }
+
+    private void entregar(Player p, int n) {
+        Material mat = Material.matchMaterial(missions.getString(base(n) + "objetivo", ""));
+        if (mat == null) return;
+        int falta = objetivo(n) - avance(p,n);
+        if (falta <= 0) return;
+        Material extra = Material.matchMaterial(missions.getString(base(n) + "extra.item", ""));
+        int cantidadExtra = extra == null ? 0 : missions.getInt(base(n) + "extra.cantidad", 0);
+        int totalPrincipal = falta + (mat == extra ? cantidadExtra : 0);
+        if (contar(p,mat) < totalPrincipal || (extra != null && extra != mat && contar(p,extra) < cantidadExtra)) {
+            p.sendMessage("§cNecesitas " + totalPrincipal + " " + mat.name() +
+                (extra == null ? "" : " y " + cantidadExtra + " " + extra.name()) + " en tu inventario.");
+            return;
+        }
+        // Entrega atómica: primero se comprueban todos los materiales.
+        consumir(p,mat,totalPrincipal);
+        if (extra != null && extra != mat) consumir(p,extra,cantidadExtra);
+        missions.set(progreso(p,n) + "avance", objetivo(n));
+        guardarMisiones();
+        p.sendMessage("§a¡Entrega realizada! Elige tu recompensa.");
+    }
+
+    private void abrirPremios(Player p, int n) {
+        pendingClaim.put(p.getUniqueId(), n);
+        Inventory inv = Bukkit.createInventory(null, 27, MENU_PREMIO);
+        inv.setItem(11, icono(Material.RED_DYE, "§c+1 VIDA", "§7Máximo 3 vidas", "§7Excluye el premio de objetos"));
+        ItemStack premio = missions.getItemStack(base(n) + "premio");
+        if (premio == null) inv.setItem(15, icono(Material.BARRIER, "§cSin premio configurado"));
+        else {
+            ItemStack mostrar = premio.clone();
+            ItemMeta meta = mostrar.getItemMeta();
+            if (meta != null) {
+                java.util.List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
+                lore.add("§eClic para elegir premio en vez de vida");
+                meta.setLore(lore); mostrar.setItemMeta(meta);
+            }
+            inv.setItem(15, mostrar);
+        }
+        p.openInventory(inv);
+    }
+
+    @EventHandler
+    public void onMissionClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player p)) return;
+        // Impide cobrar progreso de una semana anterior si el menu quedo abierto.
+        comprobarSemana();
+        String titulo = event.getView().getTitle();
+        if (!titulo.equals(MENU_MISION) && !titulo.equals(MENU_PREMIO) && !titulo.equals(MENU_ADMIN)) return;
+        event.setCancelled(true);
+        if (event.getClickedInventory() == null || event.getRawSlot() >= event.getView().getTopInventory().getSize()) return;
+        int slot = event.getRawSlot();
+        if (titulo.equals(MENU_ADMIN)) {
+            if (slot == 22 || slot == 10 || slot == 13 || slot == 16) {
+                p.sendMessage("§eConfigura las misiones con /misionadmin matar, entregar, extra y premio.");
+                p.sendMessage("§7Ejemplo: /misionadmin matar 1 WARDEN 3");
+            }
+            return;
+        }
+        if (titulo.equals(MENU_MISION)) {
+            if (slot == 22 && p.hasPermission("extremovidas.admin")) { abrirAdmin(p); return; }
+            int n = slot == 10 ? 1 : slot == 13 ? 2 : slot == 16 ? 3 : -1;
+            if (n < 0 || !existe(n)) return;
+            if (cobrada(p,n)) { p.sendMessage("§cYa reclamaste esta misión esta semana."); return; }
+            if ("entregar".equals(missions.getString(base(n) + "tipo")) && avance(p,n) < objetivo(n)) entregar(p,n);
+            if (avance(p,n) < objetivo(n)) { p.sendMessage("§eAún no completas la misión."); return; }
+            abrirPremios(p,n);
+            return;
+        }
+        if (titulo.equals(MENU_PREMIO) && (slot == 11 || slot == 15)) {
+            Integer n = pendingClaim.get(p.getUniqueId());
+            if (n == null || !existe(n) || cobrada(p,n) || avance(p,n) < objetivo(n)) return;
+            if (slot == 11) {
+                int antes = lives(p.getUniqueId());
+                if (antes >= MAX_LIVES) { p.sendMessage("§cYa tienes 3 vidas. Elige el premio de objetos."); return; }
+                setLives(p.getUniqueId(), antes + 1);
+                updateGameMode(p, antes, antes + 1);
+                p.sendMessage("§a¡Has ganado 1 vida! Ahora tienes " + (antes + 1) + "/3.");
+            } else {
+                ItemStack premio = missions.getItemStack(base(n) + "premio");
+                if (premio == null) { p.sendMessage("§cEl administrador no configuró un premio."); return; }
+                Map<Integer, ItemStack> sobrantes = p.getInventory().addItem(premio.clone());
+                for (ItemStack restante : sobrantes.values())
+                    p.getWorld().dropItemNaturally(p.getLocation(), restante);
+                p.sendMessage("§a¡Recompensa semanal entregada!");
+            }
+            missions.set(progreso(p,n) + "cobrada", true);
+            guardarMisiones();
+            pendingClaim.remove(p.getUniqueId());
+            p.closeInventory();
+        }
+    }
+
+    @EventHandler
+    public void onMissionQuit(PlayerQuitEvent event) {
+        pendingClaim.remove(event.getPlayer().getUniqueId());
+    }
+
 }
