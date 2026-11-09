@@ -49,6 +49,140 @@ import java.util.UUID;
 
 public final class ExtremoVidas extends JavaPlugin implements Listener {
 
+    // Casino: tickets autenticos mediante PersistentDataContainer.
+    private org.bukkit.NamespacedKey ticketKey;
+    private org.bukkit.NamespacedKey vendedorKey;
+    private static final String MENU_CASINO = "§6§lTaquilla del Casino";
+    private static final int PRECIO_TICKET = 64;
+    private static final double CASINO_X = 9999884.5, CASINO_Y = 125, CASINO_Z = 10000142.5;
+
+    private org.bukkit.World mundoCasino() {
+        String nombre = getConfig().getString("casino.world", "world");
+        return Bukkit.getWorld(nombre);
+    }
+
+    private ItemStack ticketCasino() {
+        ItemStack item = new ItemStack(Material.PAPER);
+        ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName("§6§lTicket del Casino");
+        meta.setLore(Arrays.asList("§7Ficha oficial del casino", "§eCanjeable en futuras maquinas"));
+        meta.getPersistentDataContainer().set(ticketKey, org.bukkit.persistence.PersistentDataType.BYTE, (byte) 1);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    // Uso futuro para maquinas: verifica la identidad real del ticket.
+    public boolean esTicketCasino(ItemStack item) {
+        if (item == null || item.getType() != Material.PAPER || !item.hasItemMeta()) return false;
+        return item.getItemMeta().getPersistentDataContainer().has(ticketKey, org.bukkit.persistence.PersistentDataType.BYTE);
+    }
+
+    private void abrirTaquilla(Player player) {
+        Inventory inv = Bukkit.createInventory(null, 27, MENU_CASINO);
+        inv.setItem(13, ticketCasino());
+        inv.setItem(11, icono(Material.DIAMOND, "§bPrecio: 64 diamantes", "§7Necesitas un stack por ticket"));
+        inv.setItem(15, icono(Material.LIME_DYE, "§aComprar 1 ticket", "§7Clic para intercambiar 64 diamantes"));
+        player.openInventory(inv);
+    }
+
+    private boolean comandoCasino(CommandSender sender, String cmd, String[] args) {
+        if (cmd.equals("casinonpc")) {
+            if (!sender.hasPermission("extremovidas.admin")) {
+                sender.sendMessage("§cNo tienes permiso."); return true;
+            }
+            if (!(sender instanceof Player player)) {
+                sender.sendMessage("§cDebes usarlo dentro del juego."); return true;
+            }
+            if (args.length != 1 || !args[0].equalsIgnoreCase("crear")) {
+                sender.sendMessage("§eUso: /casinonpc crear"); return true;
+            }
+            org.bukkit.entity.Villager npc = player.getWorld().spawn(player.getLocation(), org.bukkit.entity.Villager.class);
+            npc.setCustomName("§6§lVendedor de Tickets §e[CLICK]");
+            npc.setCustomNameVisible(true);
+            npc.setProfession(org.bukkit.entity.Villager.Profession.LIBRARIAN);
+            npc.setAI(false);
+            npc.setInvulnerable(true);
+            npc.setSilent(true);
+            npc.setRemoveWhenFarAway(false);
+            npc.getPersistentDataContainer().set(vendedorKey, org.bukkit.persistence.PersistentDataType.BYTE, (byte) 1);
+            sender.sendMessage("§aVendedor creado. Haz clic derecho para comprar tickets.");
+            return true;
+        }
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("§cComando exclusivo para jugadores."); return true;
+        }
+        if (player.getGameMode() == GameMode.SPECTATOR || lives(player.getUniqueId()) <= 0) {
+            player.sendMessage("§cLos jugadores eliminados no pueden utilizar el casino."); return true;
+        }
+        if (cmd.equals("casino")) {
+            org.bukkit.World world = mundoCasino();
+            if (world == null) {
+                player.sendMessage("§cEl mundo del casino no existe. Revisa casino.world en config.yml."); return true;
+            }
+            Location destino = new Location(world, CASINO_X, CASINO_Y, CASINO_Z);
+            world.getChunkAtAsync(destino.getBlockX() >> 4, destino.getBlockZ() >> 4).thenAccept(chunk ->
+                Bukkit.getScheduler().runTask(this, () -> {
+                    if (!player.isOnline() || player.isDead()) return;
+                    if (player.teleport(destino)) {
+                        player.sendTitle("§6§l¡Bienvenido al Casino!", "§e¡Que tengas suerte!", 10, 70, 20);
+                        player.playSound(player.getLocation(), "minecraft:entity.player.levelup", 1.0f, 1.0f);
+                    } else player.sendMessage("§cNo se pudo realizar el teletransporte.");
+                })
+            );
+            return true;
+        }
+        if (cmd.equals("salircasino")) {
+            Location cama = player.getBedSpawnLocation();
+            if (cama == null || cama.getWorld() == null) {
+                player.sendMessage("§cNo tienes una cama o punto de reaparicion valido."); return true;
+            }
+            // El destino se comprueba antes de teleportar para evitar llegar dentro de bloques.
+            org.bukkit.block.Block pies = cama.getBlock();
+            org.bukkit.block.Block cabeza = cama.clone().add(0, 1, 0).getBlock();
+            if (!pies.isPassable() || !cabeza.isPassable()) {
+                player.sendMessage("§cTu punto de reaparicion esta obstruido."); return true;
+            }
+            if (player.teleport(cama)) player.sendMessage("§aHas salido del casino.");
+            else player.sendMessage("§cNo se pudo realizar el teletransporte.");
+            return true;
+        }
+        return false;
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onVendedorInteract(org.bukkit.event.player.PlayerInteractEntityEvent event) {
+        if (!event.getRightClicked().getPersistentDataContainer().has(vendedorKey, org.bukkit.persistence.PersistentDataType.BYTE)) return;
+        event.setCancelled(true);
+        if (event.getHand() != org.bukkit.inventory.EquipmentSlot.HAND) return;
+        abrirTaquilla(event.getPlayer());
+    }
+
+    @EventHandler
+    public void onTaquillaClick(InventoryClickEvent event) {
+        if (!MENU_CASINO.equals(event.getView().getTitle())) return;
+        event.setCancelled(true);
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (event.getRawSlot() != 15 || event.getClickedInventory() != event.getView().getTopInventory()) return;
+        if (contar(player, Material.DIAMOND) < PRECIO_TICKET) {
+            player.sendMessage("§cNecesitas 64 diamantes para comprar un ticket."); return;
+        }
+        // Verificar espacio antes de cobrar. El ticket ocupa un slot propio.
+        if (player.getInventory().firstEmpty() == -1) {
+            player.sendMessage("§cDeja un espacio libre en tu inventario antes de comprar."); return;
+        }
+        consumir(player, Material.DIAMOND, PRECIO_TICKET);
+        java.util.Map<Integer, ItemStack> sobrantes = player.getInventory().addItem(ticketCasino());
+        if (!sobrantes.isEmpty()) {
+            // No perder el ticket si un plugin externo cambia el inventario durante la transaccion.
+            player.getInventory().addItem(new ItemStack(Material.DIAMOND, PRECIO_TICKET));
+            player.sendMessage("§cCompra cancelada: no hay espacio para el ticket.");
+            return;
+        }
+        player.sendMessage("§a¡Has comprado un Ticket del Casino por 64 diamantes!");
+        player.playSound(player.getLocation(), "minecraft:entity.experience_orb.pickup", 1.0f, 1.0f);
+    }
+
+
     private File missionFile;
     private YamlConfiguration missions;
     private static final String MENU_MISION = "§5§lMisiones semanales";
@@ -80,6 +214,9 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
 
     @Override
     public void onEnable() {
+        saveDefaultConfig();
+        ticketKey = new org.bukkit.NamespacedKey(this, "ticket_casino");
+        vendedorKey = new org.bukkit.NamespacedKey(this, "vendedor_casino");
 
         if (!getDataFolder().exists()) {
             getDataFolder().mkdirs();
@@ -530,6 +667,8 @@ public final class ExtremoVidas extends JavaPlugin implements Listener {
     ) {
 
         String cmd = command.getName().toLowerCase();
+        if (cmd.equals("casino") || cmd.equals("salircasino") || cmd.equals("casinonpc"))
+            return comandoCasino(sender, cmd, args);
         if (cmd.equals("mision")) {
             if (!(sender instanceof Player player)) {
                 sender.sendMessage("§cAbre este menú dentro del juego.");
